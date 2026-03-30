@@ -119,3 +119,6 @@ app.MapControllers();
 app.MapHealthChecks("/health");
 
 app.Run();
+
+// For test access to entry point
+public partial class Program { }

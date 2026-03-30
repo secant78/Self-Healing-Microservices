@@ -1,0 +1,64 @@
+{
+  "alertRules": [
+    {
+      "name": "payment-service-high-failure-rate",
+      "description": "Fires when Payment Service error rate exceeds 10% in a 5-minute window",
+      "severity": 2,
+      "type": "MetricAlert",
+      "criteria": {
+        "metricName": "requests/failed",
+        "operator": "GreaterThan",
+        "threshold": 10,
+        "timeAggregation": "Average",
+        "windowSize": "PT5M",
+        "evaluationFrequency": "PT1M"
+      },
+      "action": "CIRCUIT_BREAKER_OPEN",
+      "selfHealingLogic": "Toggle circuit breaker on payment-service to return 503 instead of cascading 500 errors"
+    },
+    {
+      "name": "payment-service-high-latency",
+      "description": "Fires when Payment Service P95 latency exceeds 3000ms",
+      "severity": 3,
+      "type": "MetricAlert",
+      "criteria": {
+        "metricName": "requests/duration",
+        "operator": "GreaterThan",
+        "threshold": 3000,
+        "timeAggregation": "Percentile95",
+        "windowSize": "PT5M"
+      },
+      "action": "RESTART",
+      "selfHealingLogic": "Restart the payment-service Container App revision to clear any memory/connection leaks"
+    },
+    {
+      "name": "payment-service-500-errors-log-alert",
+      "description": "KQL log alert: payment-service 5xx errors > 10% over 5 min",
+      "severity": 2,
+      "type": "LogAlert",
+      "kqlQuery": "AppRequests | where CloudRoleName == 'payment-service' | where TimeGenerated > ago(5m) | summarize ErrorRate = todouble(countif(Success == false)) / count() * 100 | where ErrorRate > 10",
+      "action": "CIRCUIT_BREAKER_OPEN",
+      "selfHealingLogic": "Enable circuit breaker feature flag on payment-service"
+    },
+    {
+      "name": "payment-service-recovery",
+      "description": "Fires when Payment Service error rate drops below 2% (recovery)",
+      "severity": 4,
+      "type": "MetricAlert",
+      "criteria": {
+        "metricName": "requests/failed",
+        "operator": "LessThan",
+        "threshold": 2,
+        "timeAggregation": "Average",
+        "windowSize": "PT10M"
+      },
+      "action": "CIRCUIT_BREAKER_CLOSE",
+      "selfHealingLogic": "Close circuit breaker and resume normal payment processing"
+    }
+  ],
+  "remediation_map": {
+    "CIRCUIT_BREAKER_OPEN": "POST /circuit-breaker/open on payment-service",
+    "CIRCUIT_BREAKER_CLOSE": "POST /circuit-breaker/close on payment-service",
+    "RESTART": "Restart Container App active revision via Azure SDK"
+  }
+}

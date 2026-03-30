@@ -196,6 +196,26 @@ async def toggle_circuit_breaker(config: CircuitBreakerConfig) -> dict:
     }
 
 
+@app.post("/circuit-breaker/open", status_code=200)
+async def open_circuit_breaker() -> dict:
+    """Open the circuit breaker (triggered by self-healing automation)."""
+    chaos_controller.set_circuit_breaker_enabled(True)
+    return {
+        "message": "Circuit breaker opened",
+        "circuit_breaker_enabled": True,
+    }
+
+
+@app.post("/circuit-breaker/close", status_code=200)
+async def close_circuit_breaker() -> dict:
+    """Close the circuit breaker, restoring normal payment processing."""
+    chaos_controller.set_circuit_breaker_enabled(False)
+    return {
+        "message": "Circuit breaker closed",
+        "circuit_breaker_enabled": False,
+    }
+
+
 @app.get("/status")
 async def get_status() -> dict:
     """Return the full chaos state including circuit breaker status."""

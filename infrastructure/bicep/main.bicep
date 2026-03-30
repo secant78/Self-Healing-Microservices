@@ -69,6 +69,20 @@ module selfHealing 'modules/self-healing.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
+// Self-healing Azure Function App — remediation executor
+// ---------------------------------------------------------------------------
+module functionApp 'modules/function-app.bicep' = {
+  name: 'function-app-${environmentName}'
+  params: {
+    location: location
+    environmentName: environmentName
+    appInsightsConnectionString: resolvedAppInsightsConnectionString
+    paymentServiceUrl: containerApps.outputs.paymentServiceUrl
+    actionGroupId: selfHealing.outputs.actionGroupId
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 @description('Public HTTPS URL for the frontend Container App.')
@@ -82,3 +96,6 @@ output paymentServiceUrl string = containerApps.outputs.paymentServiceUrl
 
 @description('Application Insights instrumentation key.')
 output applicationInsightsKey string = monitoring.outputs.instrumentationKey
+
+@description('Default HTTPS hostname of the self-healing Function App.')
+output functionAppUrl string = functionApp.outputs.functionAppUrl
