@@ -1,0 +1,116 @@
+// ============================================================
+// Error Rate SLI - Payment Service Failure Rate
+// Threshold alert: ErrorRate > 10% over 5-minute window
+// ============================================================
+
+// --- Query 1: Payment Service Error Rate (Last 5 Minutes, 1-Minute Bins) ---
+requests
+| where cloud_RoleName == "payment-service"
+| where timestamp > ago(5m)
+| summarize
+    TotalRequests  = count(),
+    FailedRequests = countif(success == false),
+    ErrorRate      = todouble(countif(success == false)) / count() * 100
+  by bin(timestamp, 1m)
+| where ErrorRate > 10
+| project timestamp, ErrorRate, TotalRequests, FailedRequests
+
+// ============================================================
+// --- Query 2: Error Rate by Service (Last 15 Minutes) ---
+// Compares error rates across all three microservices side-by-side
+// ============================================================
+//
+// requests
+// | where timestamp > ago(15m)
+// | summarize
+//     TotalRequests  = count(),
+//     FailedRequests = countif(success == false),
+//     ErrorRate      = round(todouble(countif(success == false)) / count() * 100, 2)
+//   by cloud_RoleName, bin(timestamp, 1m)
+// | extend SLO_Status = iff(ErrorRate > 1, "BREACH", "OK")
+// | order by timestamp desc, ErrorRate desc
+
+// ============================================================
+// --- Query 3: 5xx HTTP Errors by Endpoint (Last 30 Minutes) ---
+// Shows which specific endpoints are generating server errors
+// ============================================================
+//
+// requests
+// | where timestamp > ago(30m)
+// | where toint(resultCode) >= 500
+// | summarize
+//     ErrorCount = count(),
+//     LastSeen   = max(timestamp)
+//   by cloud_RoleName, name, resultCode
+// | extend ResultCodeLabel = case(
+//     resultCode == "500", "Internal Server Error",
+//     resultCode == "502", "Bad Gateway",
+//     resultCode == "503", "Service Unavailable",
+//     resultCode == "504", "Gateway Timeout",
+//     "Other 5xx"
+//   )
+// | order by ErrorCount desc
+
+// ============================================================
+// --- Query 4: Chaos Mode Detection ---
+// Detects when chaos injection is active by looking for elevated
+// error spikes that follow a pattern inconsistent with organic traffic.
+// Payment service returns 503 during chaos mode.
+// ============================================================
+//
+// requests
+// | where timestamp > ago(1h)
+// | where cloud_RoleName == "payment-service"
+// | summarize
+//     TotalRequests  = count(),
+//     Errors503      = countif(resultCode == "503"),
+//     ErrorRate      = round(todouble(countif(success == false)) / count() * 100, 2)
+//   by bin(timestamp, 1m)
+// | extend ChaosLikely = iff(Errors503 > 5 and ErrorRate > 30, "CHAOS_SUSPECTED", "NORMAL")
+// | project timestamp, TotalRequests, Errors503, ErrorRate, ChaosLikely
+// | order by timestamp desc
+
+// ============================================================
+// --- Query 5: Error Rate Spike Detection (Anomaly) ---
+// Uses series_decompose_anomalies to find statistically unusual error spikes
+// over the last 24 hours — helps distinguish chaos from real outages
+// ============================================================
+//
+// let timeRange = ago(24h);
+// let binSize = 5m;
+// requests
+// | where timestamp > timeRange
+// | where cloud_RoleName == "payment-service"
+// | make-series
+//     ErrorRate = round(
+//         todouble(countif(success == false)) / count() * 100, 2
+//     ) default=0
+//   on timestamp from timeRange to now() step binSize
+//   by cloud_RoleName
+// | extend (anomalies, score, baseline) = series_decompose_anomalies(ErrorRate, 2.0)
+// | mv-expand
+//     timestamp to typeof(datetime),
+//     ErrorRate  to typeof(double),
+//     anomalies  to typeof(int),
+//     score      to typeof(double),
+//     baseline   to typeof(double)
+// | where anomalies != 0
+// | project timestamp, cloud_RoleName, ErrorRate, baseline, score
+// | order by timestamp desc
+
+// ============================================================
+// --- Query 6: Downstream Dependency Errors (Order -> Payment) ---
+// Tracks failed outbound calls from order-service to payment-service
+// ============================================================
+//
+// dependencies
+// | where timestamp > ago(30m)
+// | where cloud_RoleName == "order-service"
+// | where target contains "payment-service"
+// | summarize
+//     TotalCalls   = count(),
+//     FailedCalls  = countif(success == false),
+//     FailureRate  = round(todouble(countif(success == false)) / count() * 100, 2),
+//     AvgLatencyMs = avg(duration)
+//   by bin(timestamp, 1m), target
+// | order by timestamp desc

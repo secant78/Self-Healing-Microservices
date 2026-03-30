@@ -1,0 +1,149 @@
+version: "3.9"
+
+# ============================================================
+# Self-Healing Microservices - Local Development Stack
+#
+# Includes all three microservices plus a local Jaeger instance
+# for distributed tracing without needing Azure credentials.
+#
+# Usage:
+#   docker compose up --build       # start everything
+#   docker compose up frontend      # start one service
+#   docker compose down -v          # stop and remove volumes
+#
+# Ports exposed on localhost:
+#   3000  - Frontend (Node.js)
+#   8080  - Order Service (.NET 8)
+#   8000  - Payment Service (Python / FastAPI)
+#   16686 - Jaeger UI (trace viewer)
+#   4318  - Jaeger OTLP/HTTP collector
+# ============================================================
+
+networks:
+  app-network:
+    driver: bridge
+
+services:
+
+  # ── Frontend (Node.js) ──────────────────────────────────────
+  frontend:
+    build:
+      context: services/frontend
+      dockerfile: Dockerfile
+    container_name: self-healing-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      ORDER_SERVICE_URL: http://order-service:8080
+      OTEL_SERVICE_NAME: frontend
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=dev
+    depends_on:
+      order-service:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - app-network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Order Service (.NET 8) ──────────────────────────────────
+  order-service:
+    build:
+      context: services/order-service
+      dockerfile: Dockerfile
+    container_name: self-healing-order-service
+    ports:
+      - "8080:8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      PAYMENT_SERVICE_URL: http://payment-service:8000
+      OTEL_SERVICE_NAME: order-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=dev
+    depends_on:
+      payment-service:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - app-network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ── Payment Service (Python / FastAPI) ──────────────────────
+  payment-service:
+    build:
+      context: services/payment-service
+      dockerfile: Dockerfile
+    container_name: self-healing-payment-service
+    ports:
+      - "8000:8000"
+    environment:
+      ENVIRONMENT: development
+      PAYMENT_SERVICE_PORT: "8000"
+      CHAOS_MODE_ENABLED: "false"
+      CIRCUIT_BREAKER_ENABLED: "true"
+      CIRCUIT_BREAKER_THRESHOLD: "5"
+      CIRCUIT_BREAKER_TIMEOUT_SECONDS: "30"
+      OTEL_SERVICE_NAME: payment-service
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_EXPORTER: otlp
+      OTEL_METRICS_EXPORTER: none
+      OTEL_LOGS_EXPORTER: none
+      OTEL_RESOURCE_ATTRIBUTES: deployment.environment=local,service.version=dev
+    depends_on:
+      jaeger:
+        condition: service_started
+    networks:
+      - app-network
+    restart: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Jaeger (Local Distributed Tracing) ──────────────────────
+  # Replaces Application Insights for local development.
+  # View traces at: http://localhost:16686
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: self-healing-jaeger
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP (used by all services)
+      - "9411:9411"     # Zipkin-compatible endpoint (optional)
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+      COLLECTOR_ZIPKIN_HOST_PORT: "9411"
+      SPAN_STORAGE_TYPE: memory
+      MEMORY_MAX_TRACES: "10000"
+    networks:
+      - app-network
+    restart: unless-stopped

@@ -1,0 +1,125 @@
+// ============================================================
+// Service Health Overview - Application Map Data
+// Use in: Application Insights > Logs
+// Purpose: Overall health of all microservices and their dependencies
+// ============================================================
+
+// --- Query 1: Dependency Health by Target (Last 30 Minutes) ---
+dependencies
+| where timestamp > ago(30m)
+| summarize
+    AvgDuration  = avg(duration),
+    FailureCount = countif(success == false),
+    TotalCalls   = count(),
+    SuccessRate  = todouble(countif(success == true)) / count() * 100
+  by target, cloud_RoleName
+| order by FailureCount desc
+
+// ============================================================
+// --- Query 2: Distributed Trace Reconstruction ---
+// Joins requests and dependencies by operation_Id to reconstruct
+// end-to-end traces across Frontend -> Order Service -> Payment Service
+// ============================================================
+//
+// let traceWindow = ago(1h);
+// let incomingRequests = requests
+//     | where timestamp > traceWindow
+//     | project
+//         OperationId   = operation_Id,
+//         ServiceName   = cloud_RoleName,
+//         RequestName   = name,
+//         RequestStart  = timestamp,
+//         DurationMs    = duration,
+//         Success       = success,
+//         ResultCode    = resultCode,
+//         ItemType      = "Request";
+// let outgoingDeps = dependencies
+//     | where timestamp > traceWindow
+//     | project
+//         OperationId   = operation_Id,
+//         ServiceName   = cloud_RoleName,
+//         RequestName   = name,
+//         RequestStart  = timestamp,
+//         DurationMs    = duration,
+//         Success       = success,
+//         Target        = target,
+//         ItemType      = "Dependency";
+// union incomingRequests, outgoingDeps
+// | order by OperationId asc, RequestStart asc
+// | project OperationId, ItemType, ServiceName, RequestName, RequestStart, DurationMs, Success
+
+// ============================================================
+// --- Query 3: Alert Threshold Evaluation Query ---
+// Returns services that are currently breaching health thresholds.
+// Run this query as a scheduled alert rule in Azure Monitor.
+//   Alert when: result count > 0
+//   Frequency:  Every 5 minutes
+//   Lookback:   15 minutes
+// ============================================================
+//
+// let errorRateThreshold = 5.0;    // percent
+// let latencyP95Threshold = 1000;  // milliseconds
+// let minRequestCount = 10;        // ignore low-traffic windows
+// requests
+// | where timestamp > ago(15m)
+// | summarize
+//     RequestCount   = count(),
+//     FailedCount    = countif(success == false),
+//     ErrorRate      = round(todouble(countif(success == false)) / count() * 100, 2),
+//     P95LatencyMs   = percentile(duration, 95)
+//   by cloud_RoleName
+// | where RequestCount >= minRequestCount
+// | where ErrorRate > errorRateThreshold or P95LatencyMs > latencyP95Threshold
+// | extend
+//     ErrorRateBreach  = iff(ErrorRate > errorRateThreshold, "YES", "NO"),
+//     LatencyBreach    = iff(P95LatencyMs > latencyP95Threshold, "YES", "NO"),
+//     AlertSeverity    = case(
+//         ErrorRate > 20 or P95LatencyMs > 3000, "Critical",
+//         ErrorRate > 10 or P95LatencyMs > 2000, "High",
+//         "Medium"
+//     )
+// | project
+//     cloud_RoleName,
+//     RequestCount,
+//     ErrorRate,
+//     P95LatencyMs,
+//     ErrorRateBreach,
+//     LatencyBreach,
+//     AlertSeverity
+// | order by AlertSeverity asc
+
+// ============================================================
+// --- Query 4: Circuit Breaker Activity ---
+// Detects circuit breaker open/close events emitted as custom events
+// from the payment-service when chaos mode is toggled
+// ============================================================
+//
+// customEvents
+// | where timestamp > ago(2h)
+// | where name in ("circuit_breaker_opened", "circuit_breaker_closed", "circuit_breaker_half_open")
+// | extend
+//     ServiceName  = tostring(customDimensions["service"]),
+//     State        = tostring(customDimensions["state"]),
+//     FailureCount = toint(customDimensions["failure_count"]),
+//     Threshold    = toint(customDimensions["threshold"])
+// | project timestamp, name, ServiceName, State, FailureCount, Threshold
+// | order by timestamp desc
+
+// ============================================================
+// --- Query 5: Self-Healing Action Audit Log ---
+// Shows all restart/recovery actions triggered by the Azure Function.
+// The function emits structured traces with action details.
+// ============================================================
+//
+// traces
+// | where timestamp > ago(24h)
+// | where cloud_RoleName == "self-healing-function"
+// | where message contains "SELF_HEALING_ACTION"
+// | extend
+//     ActionType     = tostring(customDimensions["action_type"]),
+//     TargetService  = tostring(customDimensions["target_service"]),
+//     AlertName      = tostring(customDimensions["alert_name"]),
+//     CorrelationId  = tostring(customDimensions["correlation_id"]),
+//     OutcomeStatus  = tostring(customDimensions["outcome"])
+// | project timestamp, ActionType, TargetService, AlertName, CorrelationId, OutcomeStatus
+// | order by timestamp desc

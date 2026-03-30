@@ -1,0 +1,179 @@
+// ============================================================
+// SLO Compliance Dashboard
+// Service Level Objectives for Self-Healing Microservices
+//
+// SLO Definitions:
+//   Availability : 99.9% of requests succeed (error rate < 0.1%)
+//   Latency      : P95 request duration < 1000ms
+//   Error Budget : 43.8 minutes/month downtime allowable at 99.9%
+//
+// Pin each query as a tile in an Azure Workbook or Dashboard.
+// ============================================================
+
+// --- Query 1: Availability SLO Compliance (Rolling 30 Days) ---
+// Target: 99.9% availability per service
+// Shows current compliance and remaining error budget in minutes
+let sloTarget = 99.9;
+let windowDays = 30d;
+requests
+| where timestamp > ago(windowDays)
+| summarize
+    TotalRequests   = count(),
+    SuccessRequests = countif(success == true),
+    FailedRequests  = countif(success == false)
+  by cloud_RoleName
+| extend
+    AvailabilityPct    = round(todouble(SuccessRequests) / todouble(TotalRequests) * 100, 4),
+    SLOCompliant       = iff(
+        todouble(SuccessRequests) / todouble(TotalRequests) * 100 >= sloTarget,
+        "COMPLIANT",
+        "BREACH"
+    ),
+    ErrorBudgetUsedPct = round(
+        (1.0 - todouble(SuccessRequests) / todouble(TotalRequests)) /
+        (1.0 - sloTarget / 100.0) * 100.0,
+        2
+    ),
+    // Error budget for 30 days at 99.9% = 43.2 minutes
+    ErrorBudgetRemainingMin = round(
+        43.2 * (1.0 - (
+            (1.0 - todouble(SuccessRequests) / todouble(TotalRequests)) /
+            (1.0 - sloTarget / 100.0)
+        )),
+        1
+    )
+| project
+    cloud_RoleName,
+    TotalRequests,
+    SuccessRequests,
+    FailedRequests,
+    AvailabilityPct,
+    SLOTarget = sloTarget,
+    SLOCompliant,
+    ErrorBudgetUsedPct,
+    ErrorBudgetRemainingMin
+| order by AvailabilityPct asc
+
+// ============================================================
+// --- Query 2: Latency SLO Compliance (Rolling 24 Hours) ---
+// Target: P95 latency < 1000ms per service
+// Uses 5-minute bins to show compliance windows throughout the day
+// ============================================================
+//
+// let latencySLOMs = 1000.0;
+// requests
+// | where timestamp > ago(24h)
+// | summarize
+//     P50Ms          = percentile(duration, 50),
+//     P95Ms          = percentile(duration, 95),
+//     P99Ms          = percentile(duration, 99),
+//     RequestCount   = count()
+//   by cloud_RoleName, bin(timestamp, 5m)
+// | extend
+//     P95_SLO_Status = iff(P95Ms <= latencySLOMs, "COMPLIANT", "BREACH"),
+//     P95_Headroom   = round(latencySLOMs - P95Ms, 1),
+//     P95_Overage    = iff(P95Ms > latencySLOMs, round(P95Ms - latencySLOMs, 1), 0.0)
+// | order by timestamp desc, cloud_RoleName asc
+
+// ============================================================
+// --- Query 3: Error Budget Burn Rate (Last 1 Hour vs. Last 6 Hours) ---
+// A burn rate > 1 means you are consuming error budget faster than it replenishes.
+// Burn rate > 14.4 over 1 hour triggers an immediate page (1-hour budget rule).
+// Burn rate > 6 over 6 hours triggers a ticket (slow burn rule).
+//
+// Based on Google SRE Workbook alerting strategy.
+// ============================================================
+//
+// let sloTarget         = 99.9;           // 99.9% availability
+// let monthlyBudgetMin  = 43.2;           // minutes per 30-day month
+// let shortWindow       = 1h;
+// let longWindow        = 6h;
+// let shortBurnRate = requests
+//     | where timestamp > ago(shortWindow)
+//     | summarize
+//         Total  = count(),
+//         Failed = countif(success == false)
+//       by cloud_RoleName
+//     | extend
+//         ActualErrorRate   = todouble(Failed) / todouble(Total),
+//         AllowedErrorRate  = 1.0 - sloTarget / 100.0,
+//         BurnRate1h        = (todouble(Failed) / todouble(Total)) / (1.0 - sloTarget / 100.0)
+//     | project cloud_RoleName, BurnRate1h, ActualErrorRate;
+// let longBurnRate = requests
+//     | where timestamp > ago(longWindow)
+//     | summarize
+//         Total  = count(),
+//         Failed = countif(success == false)
+//       by cloud_RoleName
+//     | extend BurnRate6h = (todouble(Failed) / todouble(Total)) / (1.0 - sloTarget / 100.0)
+//     | project cloud_RoleName, BurnRate6h;
+// shortBurnRate
+// | join kind=leftouter longBurnRate on cloud_RoleName
+// | extend
+//     AlertLevel = case(
+//         BurnRate1h > 14.4,                "PAGE_NOW",
+//         BurnRate1h > 6 and BurnRate6h > 6, "TICKET_URGENT",
+//         BurnRate6h > 3,                   "TICKET_NORMAL",
+//         "OK"
+//     ),
+//     BudgetConsumedThisHourMin = round(BurnRate1h * (monthlyBudgetMin / (30.0 * 24.0)), 2)
+// | project
+//     cloud_RoleName,
+//     BurnRate1h   = round(BurnRate1h, 2),
+//     BurnRate6h   = round(BurnRate6h, 2),
+//     AlertLevel,
+//     BudgetConsumedThisHourMin
+// | order by BurnRate1h desc
+
+// ============================================================
+// --- Query 4: SLO Trend - Compliance % Per Day (Last 30 Days) ---
+// Shows whether SLO compliance is improving or degrading over time.
+// Pin as a line chart in the workbook.
+// ============================================================
+//
+// let sloTarget = 99.9;
+// requests
+// | where timestamp > ago(30d)
+// | summarize
+//     TotalRequests   = count(),
+//     SuccessRequests = countif(success == true)
+//   by cloud_RoleName, bin(timestamp, 1d)
+// | extend
+//     AvailabilityPct = round(todouble(SuccessRequests) / todouble(TotalRequests) * 100, 4),
+//     SLOTarget       = sloTarget
+// | project timestamp, cloud_RoleName, AvailabilityPct, SLOTarget
+// | order by timestamp asc
+
+// ============================================================
+// --- Query 5: Monthly SLO Report Summary ---
+// One-row-per-service summary for status page or exec reporting
+// ============================================================
+//
+// let sloAvailTarget  = 99.9;
+// let sloLatencyP95Ms = 1000.0;
+// requests
+// | where timestamp > ago(30d)
+// | summarize
+//     Total       = count(),
+//     Successes   = countif(success == true),
+//     P95Ms       = percentile(duration, 95),
+//     P99Ms       = percentile(duration, 99)
+//   by cloud_RoleName
+// | extend
+//     AvailabilityPct      = round(todouble(Successes) / todouble(Total) * 100, 4),
+//     AvailabilitySLO      = iff(todouble(Successes) / todouble(Total) * 100 >= sloAvailTarget, "MET", "MISSED"),
+//     LatencySLO           = iff(P95Ms <= sloLatencyP95Ms, "MET", "MISSED"),
+//     OverallStatus        = iff(
+//         todouble(Successes) / todouble(Total) * 100 >= sloAvailTarget and P95Ms <= sloLatencyP95Ms,
+//         "HEALTHY", "AT_RISK"
+//     )
+// | project
+//     Service        = cloud_RoleName,
+//     TotalRequests  = Total,
+//     AvailabilityPct,
+//     AvailabilitySLO,
+//     P95LatencyMs   = P95Ms,
+//     P99LatencyMs   = P99Ms,
+//     LatencySLO,
+//     OverallStatus
+// | order by OverallStatus asc, AvailabilityPct asc

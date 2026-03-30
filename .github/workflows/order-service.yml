@@ -1,0 +1,166 @@
+name: Order Service CI/CD
+
+on:
+  push:
+    branches:
+      - main
+      - 'feature/**'
+    paths:
+      - 'services/order-service/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'services/order-service/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  SERVICE_NAME: order-service
+  IMAGE_NAME: self-healing-order-service
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_PATH: services/order-service/OrderService/OrderService.csproj
+
+jobs:
+  build-and-test:
+    name: Build and Test (.NET 8)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore NuGet packages
+        run: dotnet restore ${{ env.PROJECT_PATH }}
+
+      - name: Build solution
+        run: |
+          dotnet build ${{ env.PROJECT_PATH }} \
+            --configuration Release \
+            --no-restore \
+            --verbosity minimal
+
+      - name: Run unit tests
+        run: |
+          TEST_PROJECTS=$(find services/order-service -name "*.Tests.csproj" -o -name "*Tests.csproj" 2>/dev/null || true)
+          if [ -n "${TEST_PROJECTS}" ]; then
+            echo "Running tests for: ${TEST_PROJECTS}"
+            dotnet test services/order-service/ \
+              --configuration Release \
+              --no-build \
+              --verbosity normal \
+              --logger "trx;LogFileName=test-results.trx" \
+              --results-directory ./test-results
+          else
+            echo "No test projects found, skipping test run."
+          fi
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always() && hashFiles('test-results/*.trx') != ''
+        with:
+          name: .NET Test Results
+          path: test-results/*.trx
+          reporter: dotnet-trx
+
+  docker-build-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    needs: build-and-test
+    if: github.event_name == 'push'
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name ${{ secrets.ACR_NAME }}
+
+      - name: Generate image metadata
+        id: meta
+        run: |
+          SHORT_SHA=${GITHUB_SHA::8}
+          IMAGE_TAG="${{ secrets.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${SHORT_SHA}"
+          LATEST_TAG="${{ secrets.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag ${{ steps.meta.outputs.image_tag }} \
+            --tag ${{ steps.meta.outputs.latest_tag }} \
+            --label "git.sha=${{ github.sha }}" \
+            --label "git.branch=${{ github.ref_name }}" \
+            --label "build.date=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            services/order-service/
+
+      - name: Push Docker image to ACR
+        run: |
+          docker push ${{ steps.meta.outputs.image_tag }}
+          docker push ${{ steps.meta.outputs.latest_tag }}
+
+  deploy-to-aca:
+    name: Deploy to Azure Container Apps
+    runs-on: ubuntu-latest
+    needs: docker-build-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Update Container App with new image
+        run: |
+          az containerapp update \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --image ${{ needs.docker-build-push.outputs.image_tag }}
+
+      - name: Verify deployment
+        run: |
+          echo "Waiting for deployment to stabilize..."
+          sleep 30
+          PROVISIONING_STATE=$(az containerapp show \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --query "properties.provisioningState" \
+            --output tsv)
+          echo "Provisioning state: ${PROVISIONING_STATE}"
+          if [ "${PROVISIONING_STATE}" != "Succeeded" ]; then
+            echo "Deployment did not succeed. State: ${PROVISIONING_STATE}"
+            exit 1
+          fi
+
+      - name: Print deployment summary
+        run: |
+          FQDN=$(az containerapp show \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+          echo "Order Service deployed successfully."
+          echo "URL: https://${FQDN}"
+          echo "Image: ${{ needs.docker-build-push.outputs.image_tag }}"

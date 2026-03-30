@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Self-Healing Microservices Demo</title>
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    :root {
+      --azure-blue: #0078d4;
+      --azure-blue-dark: #005a9e;
+      --azure-blue-light: #2899f5;
+      --bg-primary: #1b1b2f;
+      --bg-secondary: #16213e;
+      --bg-card: #0f3460;
+      --bg-input: #1a1a3e;
+      --text-primary: #e2e8f0;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --success: #22c55e;
+      --error: #ef4444;
+      --warning: #f59e0b;
+      --border: #2d3748;
+      --border-active: #0078d4;
+      --radius: 8px;
+      --radius-lg: 12px;
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background-color: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+    }
+
+    header {
+      width: 100%;
+      max-width: 800px;
+      text-align: center;
+      margin-bottom: 40px;
+    }
+
+    .logo-bar {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .logo-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--azure-blue);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+    }
+
+    h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #e2e8f0 0%, var(--azure-blue-light) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .subtitle {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      margin-top: 6px;
+    }
+
+    .chaos-banner {
+      width: 100%;
+      max-width: 800px;
+      display: none;
+      align-items: center;
+      gap: 10px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.4);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      margin-bottom: 24px;
+      font-size: 0.9rem;
+      color: var(--warning);
+    }
+
+    .chaos-banner.visible {
+      display: flex;
+    }
+
+    .chaos-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--warning);
+      animation: pulse 1.5s infinite;
+      flex-shrink: 0;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(1.3); }
+    }
+
+    .main-grid {
+      width: 100%;
+      max-width: 800px;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+    }
+
+    @media (max-width: 600px) {
+      .main-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .card {
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px;
+      box-shadow: var(--shadow);
+    }
+
+    .card-title {
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--azure-blue-light);
+      margin-bottom: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 18px;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: var(--text-secondary);
+      margin-bottom: 6px;
+    }
+
+    select,
+    input[type="number"] {
+      width: 100%;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-primary);
+      font-size: 0.95rem;
+      padding: 10px 12px;
+      outline: none;
+      transition: border-color 0.2s;
+      appearance: none;
+    }
+
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2394a3b8' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 36px;
+      cursor: pointer;
+    }
+
+    select:focus,
+    input[type="number"]:focus {
+      border-color: var(--border-active);
+      box-shadow: 0 0 0 3px rgba(0, 120, 212, 0.15);
+    }
+
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      opacity: 0.4;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 12px 20px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s, opacity 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .btn-primary {
+      background: var(--azure-blue);
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--azure-blue-dark);
+    }
+
+    .btn-primary:active:not(:disabled) {
+      transform: scale(0.98);
+    }
+
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    .btn.loading .spinner { display: block; }
+    .btn.loading .btn-text { display: none; }
+
+    /* Results panel */
+    .results-card {
+      grid-column: 1 / -1;
+    }
+
+    .result-state {
+      display: none;
+    }
+
+    .result-state.visible {
+      display: block;
+    }
+
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .status-badge.success {
+      background: rgba(34, 197, 94, 0.15);
+      color: var(--success);
+      border: 1px solid rgba(34, 197, 94, 0.3);
+    }
+
+    .status-badge.error {
+      background: rgba(239, 68, 68, 0.15);
+      color: var(--error);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+    }
+
+    .status-badge.success .status-dot { background: var(--success); }
+    .status-badge.error .status-dot { background: var(--error); }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    @media (max-width: 480px) {
+      .metrics-grid { grid-template-columns: 1fr; }
+    }
+
+    .metric-tile {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      border: 1px solid var(--border);
+    }
+
+    .metric-label {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .metric-value {
+      font-size: 0.9rem;
+      font-weight: 600;
+      font-family: 'Courier New', Courier, monospace;
+      color: var(--text-primary);
+      word-break: break-all;
+    }
+
+    .metric-value.highlight {
+      color: var(--azure-blue-light);
+    }
+
+    .detail-box {
+      background: var(--bg-card);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      padding: 14px 16px;
+    }
+
+    .detail-box pre {
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 0.82rem;
+      color: var(--text-secondary);
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.6;
+    }
+
+    .empty-state {
+      text-align: center;
+      padding: 32px 20px;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+
+    .empty-icon {
+      font-size: 2rem;
+      margin-bottom: 10px;
+      opacity: 0.5;
+    }
+
+    footer {
+      margin-top: 48px;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      text-align: center;
+    }
+
+    footer a {
+      color: var(--azure-blue-light);
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="logo-bar">
+      <div class="logo-icon">&#9881;</div>
+      <h1>Self-Healing Microservices Demo</h1>
+    </div>
+    <p class="subtitle">Distributed tracing &bull; Chaos engineering &bull; Auto-recovery &bull; Azure Application Insights</p>
+  </header>
+
+  <div class="chaos-banner" id="chaosBanner">
+    <div class="chaos-dot"></div>
+    <span><strong>Chaos Mode Active</strong> &mdash; Payment service is injecting failures. Auto-healing may be in progress.</span>
+  </div>
+
+  <div class="main-grid">
+
+    <!-- Order Form -->
+    <div class="card">
+      <div class="card-title">Place Order</div>
+      <form id="orderForm" novalidate>
+        <div class="form-group">
+          <label for="productId">Product</label>
+          <select id="productId" name="productId" required>
+            <option value="">-- Select a product --</option>
+            <option value="prod-001">Widget Alpha &mdash; $9.99</option>
+            <option value="prod-002">Gadget Beta &mdash; $24.99</option>
+            <option value="prod-003">Device Gamma &mdash; $49.99</option>
+            <option value="prod-004">Module Delta &mdash; $99.99</option>
+            <option value="prod-005">System Epsilon &mdash; $199.99</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="quantity">Quantity</label>
+          <input
+            type="number"
+            id="quantity"
+            name="quantity"
+            min="1"
+            max="100"
+            value="1"
+            required
+          />
+        </div>
+        <button type="submit" class="btn btn-primary" id="submitBtn">
+          <div class="spinner"></div>
+          <span class="btn-text">&#128722; Place Order</span>
+        </button>
+      </form>
+    </div>
+
+    <!-- Service Info -->
+    <div class="card">
+      <div class="card-title">Service Topology</div>
+      <div style="display:flex;flex-direction:column;gap:10px;">
+        <div class="metric-tile">
+          <div class="metric-label">Frontend</div>
+          <div class="metric-value highlight">Node.js / Express</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-label">Tracing</div>
+          <div class="metric-value highlight">OpenTelemetry + App Insights</div>
+        </div>
+        <div class="metric-tile">
+          <div class="metric-label">Propagation</div>
+          <div class="metric-value highlight">W3C TraceContext</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Results Panel -->
+    <div class="card results-card">
+      <div class="card-title">Order Result</div>
+
+      <div class="result-state" id="emptyState">
+        <div class="empty-state">
+          <div class="empty-icon">&#128203;</div>
+          <div>Submit an order to see the trace and response details here.</div>
+        </div>
+      </div>
+
+      <div class="result-state" id="resultState">
+        <div class="result-header">
+          <span class="status-badge" id="statusBadge">
+            <span class="status-dot"></span>
+            <span id="statusText">Unknown</span>
+          </span>
+          <span id="resultTimestamp" style="font-size:0.8rem;color:var(--text-muted);margin-left:auto;"></span>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-tile">
+            <div class="metric-label">Latency</div>
+            <div class="metric-value highlight" id="metricLatency">&mdash;</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label">Order ID</div>
+            <div class="metric-value" id="metricOrderId">&mdash;</div>
+          </div>
+          <div class="metric-tile">
+            <div class="metric-label">Payment</div>
+            <div class="metric-value" id="metricPayment">&mdash;</div>
+          </div>
+        </div>
+
+        <div class="metric-tile" style="margin-bottom:12px;">
+          <div class="metric-label">Trace ID</div>
+          <div class="metric-value" id="metricTraceId" style="font-size:0.78rem;">&mdash;</div>
+        </div>
+
+        <div class="detail-box">
+          <div class="metric-label" style="margin-bottom:8px;">Raw Response</div>
+          <pre id="rawResponse"></pre>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <footer>
+    Self-Healing Microservices Pipeline &mdash; Built with <a href="https://opentelemetry.io" target="_blank" rel="noopener">OpenTelemetry</a>
+    &amp; <a href="https://azure.microsoft.com/en-us/products/monitor" target="_blank" rel="noopener">Azure Monitor</a>
+  </footer>
+
+  <script>
+    const form = document.getElementById('orderForm');
+    const submitBtn = document.getElementById('submitBtn');
+    const emptyState = document.getElementById('emptyState');
+    const resultState = document.getElementById('resultState');
+    const chaosBanner = document.getElementById('chaosBanner');
+
+    // Show empty state initially
+    emptyState.classList.add('visible');
+
+    function setLoading(loading) {
+      submitBtn.disabled = loading;
+      submitBtn.classList.toggle('loading', loading);
+    }
+
+    function showResult(data, success) {
+      emptyState.classList.remove('visible');
+      resultState.classList.add('visible');
+
+      const badge = document.getElementById('statusBadge');
+      badge.className = 'status-badge ' + (success ? 'success' : 'error');
+      document.getElementById('statusText').textContent = success ? 'Order Placed' : 'Order Failed';
+
+      document.getElementById('resultTimestamp').textContent = new Date().toLocaleTimeString();
+      document.getElementById('metricLatency').textContent = data.latencyMs != null ? data.latencyMs + ' ms' : '—';
+      document.getElementById('metricTraceId').textContent = data.traceId || '—';
+
+      const order = data.order || {};
+      document.getElementById('metricOrderId').textContent = order.orderId || data.orderId || '—';
+      document.getElementById('metricPayment').textContent = order.paymentStatus || '—';
+
+      document.getElementById('rawResponse').textContent = JSON.stringify(data, null, 2);
+
+      // Show chaos banner if chaos is active in the response
+      if (data.chaosActive || order.chaosActive) {
+        chaosBanner.classList.add('visible');
+      }
+    }
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const productId = document.getElementById('productId').value;
+      const quantity = parseInt(document.getElementById('quantity').value, 10);
+
+      if (!productId) {
+        alert('Please select a product.');
+        return;
+      }
+      if (!quantity || quantity < 1) {
+        alert('Please enter a valid quantity.');
+        return;
+      }
+
+      setLoading(true);
+
+      try {
+        const response = await fetch('/buy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ productId, quantity }),
+        });
+
+        const data = await response.json();
+        showResult(data, response.ok && data.success);
+      } catch (err) {
+        showResult({
+          success: false,
+          traceId: 'unavailable',
+          latencyMs: null,
+          error: err.message || 'Network error — could not reach the frontend server.',
+        }, false);
+      } finally {
+        setLoading(false);
+      }
+    });
+  </script>
+</body>
+</html>

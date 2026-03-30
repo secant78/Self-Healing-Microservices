@@ -1,0 +1,151 @@
+name: Infrastructure CI/CD (Bicep)
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+env:
+  BICEP_MAIN: infrastructure/bicep/main.bicep
+  PARAMS_DEV: infrastructure/bicep/parameters/dev.parameters.json
+  DEPLOYMENT_NAME: self-healing-microservices
+
+jobs:
+  bicep-validate:
+    name: Validate Bicep Templates
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Bicep CLI
+        run: az bicep install
+
+      - name: Lint Bicep templates
+        run: |
+          echo "Linting all Bicep files..."
+          find infrastructure/bicep -name "*.bicep" | while read -r file; do
+            echo "Linting: ${file}"
+            az bicep lint --file "${file}"
+          done
+
+      - name: Build Bicep (compile to ARM JSON)
+        run: |
+          az bicep build --file ${{ env.BICEP_MAIN }} --outfile infrastructure/bicep/compiled-arm.json
+          echo "Bicep compiled successfully."
+
+      - name: Upload compiled ARM template as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm-template
+          path: infrastructure/bicep/compiled-arm.json
+          retention-days: 7
+
+      - name: Validate ARM deployment (what-if)
+        run: |
+          az deployment group validate \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --template-file ${{ env.BICEP_MAIN }} \
+            --parameters @${{ env.PARAMS_DEV }} \
+            --name "${{ env.DEPLOYMENT_NAME }}-validate-${{ github.run_number }}"
+          echo "Bicep validation passed."
+
+      - name: Run what-if analysis
+        if: github.event_name == 'pull_request'
+        id: whatif
+        run: |
+          WHATIF_OUTPUT=$(az deployment group what-if \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --template-file ${{ env.BICEP_MAIN }} \
+            --parameters @${{ env.PARAMS_DEV }} \
+            --result-format FullResourcePayloads \
+            2>&1 || true)
+          echo "${WHATIF_OUTPUT}"
+          {
+            echo 'WHATIF_OUTPUT<<EOF'
+            echo "${WHATIF_OUTPUT}"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment what-if results on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const output = `#### Bicep What-If Analysis
+            \`\`\`
+            ${{ steps.whatif.outputs.WHATIF_OUTPUT }}
+            \`\`\`
+            *Triggered by @${{ github.actor }} on \`${{ github.ref_name }}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+  bicep-deploy:
+    name: Deploy Infrastructure (Dev)
+    runs-on: ubuntu-latest
+    needs: bicep-validate
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Bicep CLI
+        run: az bicep install
+
+      - name: Deploy Bicep to dev environment
+        id: deploy
+        run: |
+          DEPLOYMENT_OUTPUT=$(az deployment group create \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --template-file ${{ env.BICEP_MAIN }} \
+            --parameters @${{ env.PARAMS_DEV }} \
+            --name "${{ env.DEPLOYMENT_NAME }}-${{ github.run_number }}" \
+            --output json)
+          echo "${DEPLOYMENT_OUTPUT}" | jq '.properties.outputs'
+          PROVISIONING_STATE=$(echo "${DEPLOYMENT_OUTPUT}" | jq -r '.properties.provisioningState')
+          echo "Provisioning state: ${PROVISIONING_STATE}"
+          if [ "${PROVISIONING_STATE}" != "Succeeded" ]; then
+            echo "Infrastructure deployment failed."
+            exit 1
+          fi
+
+      - name: Print deployment outputs
+        run: |
+          az deployment group show \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --name "${{ env.DEPLOYMENT_NAME }}-${{ github.run_number }}" \
+            --query properties.outputs \
+            --output table

@@ -1,0 +1,87 @@
+// ============================================================
+// P95 Latency by Service - SLI Dashboard
+// Use in: Application Insights > Logs
+// Refresh: Every 5 minutes
+// ============================================================
+
+// --- Query 1: Latency Percentiles by Service (Last 1 Hour) ---
+requests
+| where timestamp > ago(1h)
+| summarize
+    P50 = percentile(duration, 50),
+    P95 = percentile(duration, 95),
+    P99 = percentile(duration, 99),
+    RequestCount = count()
+  by cloud_RoleName, bin(timestamp, 5m)
+| order by timestamp desc
+
+// ============================================================
+// --- Query 2: Payment Service Latency Detail (Last 30 Minutes) ---
+// Breaks down by endpoint to pinpoint slow operations
+// ============================================================
+//
+// requests
+// | where timestamp > ago(30m)
+// | where cloud_RoleName == "payment-service"
+// | summarize
+//     P50  = percentile(duration, 50),
+//     P95  = percentile(duration, 95),
+//     P99  = percentile(duration, 99),
+//     Avg  = avg(duration),
+//     Max  = max(duration),
+//     Calls = count()
+//   by name, bin(timestamp, 1m)
+// | extend SLO_Breach = iff(P95 > 1000, "BREACH", "OK")
+// | order by timestamp desc, P95 desc
+
+// ============================================================
+// --- Query 3: 24-Hour Latency Trend (All Services) ---
+// Shows degradation patterns over time; useful for capacity planning
+// ============================================================
+//
+// requests
+// | where timestamp > ago(24h)
+// | summarize
+//     P50 = percentile(duration, 50),
+//     P95 = percentile(duration, 95),
+//     P99 = percentile(duration, 99),
+//     RequestCount = count(),
+//     ErrorCount = countif(success == false)
+//   by cloud_RoleName, bin(timestamp, 15m)
+// | extend
+//     ErrorRate = round(todouble(ErrorCount) / todouble(RequestCount) * 100, 2),
+//     P95_SLO_Status = iff(P95 > 1000, "BREACH", "OK")
+// | order by cloud_RoleName asc, timestamp asc
+
+// ============================================================
+// --- Query 4: Top Slow Requests (Last 1 Hour) ---
+// Identify the slowest individual operations for targeted optimization
+// ============================================================
+//
+// requests
+// | where timestamp > ago(1h)
+// | where duration > 500
+// | project
+//     timestamp,
+//     ServiceName = cloud_RoleName,
+//     OperationName = name,
+//     DurationMs = duration,
+//     ResultCode = resultCode,
+//     Success = success,
+//     OperationId = operation_Id
+// | top 50 by DurationMs desc
+
+// ============================================================
+// --- Query 5: Latency Heatmap - Payment Service by Hour (Last 7 Days) ---
+// Shows which hours of day have highest latency — useful for scheduling chaos tests
+// ============================================================
+//
+// requests
+// | where timestamp > ago(7d)
+// | where cloud_RoleName == "payment-service"
+// | extend HourOfDay = hourofday(timestamp)
+// | summarize
+//     P95 = percentile(duration, 95),
+//     RequestCount = count()
+//   by HourOfDay
+// | order by HourOfDay asc
