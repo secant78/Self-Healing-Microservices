@@ -22,6 +22,7 @@ env:
   IMAGE_NAME: self-healing-order-service
   DOTNET_VERSION: '8.0.x'
   PROJECT_PATH: services/order-service/OrderService/OrderService.csproj
+  SOLUTION_PATH: services/order-service/OrderService.sln
 
 jobs:
   build-and-test:
@@ -38,11 +39,11 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Restore NuGet packages
-        run: dotnet restore ${{ env.PROJECT_PATH }}
+        run: dotnet restore ${{ env.SOLUTION_PATH }}
 
       - name: Build solution
         run: |
-          dotnet build ${{ env.PROJECT_PATH }} \
+          dotnet build ${{ env.SOLUTION_PATH }} \
             --configuration Release \
             --no-restore \
             --verbosity minimal
