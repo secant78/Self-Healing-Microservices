@@ -33,7 +33,7 @@ public class PaymentClient
     /// and surfaced as failed results so the controller can decide on the HTTP status.
     /// Rethrows <see cref="BrokenCircuitException"/> so the controller can return 503.
     /// </summary>
-    public async Task<PaymentResult> ProcessPaymentAsync(OrderRequest order)
+    public virtual async Task<PaymentResult> ProcessPaymentAsync(OrderRequest order)
     {
         var traceId = Activity.Current?.TraceId.ToString() ?? "none";
         var spanId = Activity.Current?.SpanId.ToString() ?? "none";
