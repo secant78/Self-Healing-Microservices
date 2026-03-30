@@ -27,16 +27,20 @@ public class PaymentClientTests
     /// </summary>
     private sealed class MockHttpMessageHandler : HttpMessageHandler
     {
-        private readonly Func<HttpRequestMessage, HttpResponseMessage> _handler;
+        private readonly Func<HttpRequestMessage, Task<HttpResponseMessage>> _handler;
 
-        public MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler)
+        public MockHttpMessageHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handler)
         {
             _handler = handler;
         }
 
+        /// <summary>Convenience constructor for a synchronous response factory.</summary>
+        public MockHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler)
+            : this(req => Task.FromResult(handler(req))) { }
+
         /// <summary>Convenience constructor for a fixed response.</summary>
         public MockHttpMessageHandler(HttpResponseMessage response)
-            : this(_ => response) { }
+            : this(_ => Task.FromResult(response)) { }
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
@@ -45,7 +49,7 @@ public class PaymentClientTests
             if (cancellationToken.IsCancellationRequested)
                 return Task.FromCanceled<HttpResponseMessage>(cancellationToken);
 
-            return Task.FromResult(_handler(request));
+            return _handler(request);
         }
     }
 
